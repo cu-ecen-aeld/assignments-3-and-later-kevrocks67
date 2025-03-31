@@ -18,7 +18,7 @@ then
 		echo "Using default value ${NUMFILES} for number of files to write"
 	else
 		NUMFILES=$1
-	fi	
+	fi
 else
 	NUMFILES=$1
 	WRITESTR=$2
@@ -34,7 +34,7 @@ rm -rf "${WRITEDIR}"
 # create $WRITEDIR if not assignment1
 assignment=`cat ../conf/assignment.txt`
 
-if [ $assignment != 'assignment1' ]
+if [ $assignment = 'assignment1' ]
 then
 	mkdir -p "$WRITEDIR"
 
