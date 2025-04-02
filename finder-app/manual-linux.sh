@@ -74,6 +74,11 @@ fi
 make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j$(nproc)
 make CONFIG_PREFIX=${OUTDIR}/rootfs ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} install
 
+# Clean and build the writer utility
+cd ${FINDER_APP_DIR}
+make clean
+make CROSS_COMPILE=$CROSS_COMPILE build
+
 echo "Library dependencies"
 sysroot=$(${CROSS_COMPILE}gcc -print-sysroot)
 prog_interpreter=$(${CROSS_COMPILE}readelf -a ${FINDER_APP_DIR}/writer | grep "program interpreter" | awk '{print $NF}' | cut -d ']' -f1 | awk -F/ '{print $NF}')
@@ -96,11 +101,6 @@ done
 # Make device nodes
 sudo mknod -m 666 ${OUTDIR}/rootfs/dev/null c 1 3
 sudo mknod -m 600 ${OUTDIR}/rootfs/dev/console c 5 1
-
-# Clean and build the writer utility
-cd ${FINDER_APP_DIR}
-make clean
-make CROSS_COMPILE=$CROSS_COMPILE build
 
 # Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
