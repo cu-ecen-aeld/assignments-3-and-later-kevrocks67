@@ -1,4 +1,10 @@
+#include <stdlib.h>
 #include "systemcalls.h"
+#include <unistd.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -16,6 +22,12 @@ bool do_system(const char *cmd)
  *   and return a boolean true if the system() call completed with success
  *   or false() if it returned a failure
 */
+    int ret;
+    ret = system(cmd);
+
+    if (ret != 0) {
+        return false;
+    }
 
     return true;
 }
@@ -45,9 +57,6 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
 /*
  * TODO:
@@ -58,8 +67,41 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *
 */
+    pid_t pid;
 
-    va_end(args);
+    pid = fork();
+    if (pid == -1) {
+        printf("No child process created");
+        va_end(args);
+    } else if (pid == 0) {
+
+        int err = execv(command[0], command);
+
+        if (err == -1) {
+            exit(-1);
+        }
+
+        if (errno) {
+            va_end(args);
+            exit(-1);
+        }
+    } else {
+        int wstatus;
+
+        pid_t ret_pid = waitpid(pid, &wstatus, 0);
+
+        va_end(args);
+
+        if (ret_pid == -1) {
+            return false;
+        }
+
+        if (WIFEXITED(wstatus)){
+            if (wstatus != 0) {
+                return false;
+            }
+        }
+    }
 
     return true;
 }
@@ -80,10 +122,6 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
-
 
 /*
  * TODO
@@ -92,8 +130,58 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+    int err;
+    int fd = open(outputfile, O_RDWR | O_CREAT, 00644);
 
-    va_end(args);
+    err = dup2(fd, 1);
+    if (err == -1) {
+        perror("Couldnt dupe stdout");
+        close(fd);
+        va_end(args);
+        return false;
+    }
 
+    err = dup2(fd, 2);
+    if (err == -1) {
+        perror("Couldnt dupe stderr");
+        close(fd);
+        va_end(args);
+        return false;
+    }
+
+    pid_t pid;
+
+    pid = fork();
+    if (pid == -1) {
+        printf("No child process created");
+        va_end(args);
+    } else if (pid == 0) {
+        err = execv(command[0], command);
+        if (err == -1) {
+            va_end(args);
+            exit(-1);
+        }
+
+        if (err > 0) {
+            va_end(args);
+            exit(-1);
+        }
+    } else {
+        int wstatus;
+
+        pid_t ret_pid = waitpid(pid, &wstatus, 0);
+
+        va_end(args);
+
+        if (ret_pid == -1) {
+            return false;
+        }
+
+        if (WIFEXITED(wstatus)){
+            if (wstatus != 0) {
+                return false;
+            }
+        }
+    }
     return true;
 }
