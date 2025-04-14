@@ -1,0 +1,223 @@
+#include <asm-generic/socket.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <arpa/inet.h>
+#include <errno.h>
+#include <string.h>
+#include <syslog.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <signal.h>
+
+#define BLOCK_SIZE 4096
+#define DATA_FILE_PATH "/var/tmp/aesdsocketdata"
+
+int server_fd;
+int accepted_fd;
+
+void signal_handler(int _) {
+    syslog(LOG_USER | LOG_ERR, "Caught signal, exiting");
+    close(accepted_fd);
+    close(server_fd);
+    remove(DATA_FILE_PATH);
+    _exit(-1);
+}
+
+int start_and_listen(int port) {
+    int socket_fd;
+
+    struct sockaddr_in bind_addr;
+    bind_addr.sin_addr.s_addr = INADDR_ANY;
+    bind_addr.sin_port = htons(port);
+    bind_addr.sin_family = AF_INET;
+    socklen_t bind_addr_len = (socklen_t) sizeof(bind_addr);
+
+    socket_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+    if (socket_fd == -1) {
+        perror(strerror(errno));
+        return -1;
+    }
+
+    int opt_value = 1;
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt_value, sizeof(opt_value)) != 0) {
+        perror(strerror(errno));
+        return -1;
+    }
+
+    if (bind(socket_fd, (const struct sockaddr*) &bind_addr, bind_addr_len) != 0) {
+        perror(strerror(errno));
+        return -1;
+    }
+
+    if (listen(socket_fd, 10) != 0) {
+        perror(strerror(errno));
+        return -1;
+    }
+    return socket_fd;
+}
+
+int write_to_file(const char recv_buf[BLOCK_SIZE], ssize_t size) {
+    int fd = open(DATA_FILE_PATH, O_RDWR | O_CREAT | O_APPEND, 00644);
+
+    if (fd == -1) {
+        syslog(LOG_USER | LOG_ERR, "Could not open file to write");
+        return -1;
+    }
+
+    syslog(LOG_USER | LOG_DEBUG, "Writing to %s", DATA_FILE_PATH);
+
+    ssize_t bytes_written = write(fd, recv_buf, size);
+
+    if (bytes_written < 0) {
+        syslog(LOG_USER | LOG_ERR, "Could not write to file %s", DATA_FILE_PATH);
+        return -1;
+    }
+    close(fd);
+    return bytes_written;
+}
+
+char* read_from_file() {
+    //int fd = open(DATA_FILE_PATH, O_RDONLY);
+
+    //if (fd == -1) {
+    //    syslog(LOG_USER | LOG_ERR, "Could not open file to read");
+    //    return NULL;
+    //}
+    //
+    FILE* f = fopen(DATA_FILE_PATH, "r");
+
+
+    syslog(LOG_USER | LOG_DEBUG, "Reading from %s", DATA_FILE_PATH);
+
+    //struct stat file_stat;
+    //fstat(fd, &file_stat);
+    //char* buff = (char*) malloc(file_stat.st_size + 1);
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* buff = (char*) malloc(fsize + 1);
+    memset(buff, '\0', fsize + 1);
+    fread(buff, fsize, 1, f);
+    fclose(f);
+
+    //ssize_t read_size
+    //while((read_size = read(fd, buff, BLOCK_SIZE)) > 0);
+    //close(fd);
+    return buff;
+}
+
+ssize_t recv_all(int sockfd, void *buf, size_t len) {
+    size_t total_received = 0;
+    ssize_t bytes_received;
+    char *ptr = (char *)buf; // Pointer to current position in buffer
+
+    while (total_received < len) {
+        // Calculate remaining bytes needed
+        size_t remaining = len - total_received;
+
+        // Receive data into the buffer starting from the current position
+        bytes_received = recv(sockfd, ptr + total_received, remaining, 0);
+
+        if (bytes_received == -1) {
+            // Error occurred
+            if (errno == EINTR) {
+                continue; // Interrupted by signal, try again
+            }
+            perror("recv error");
+            return -1; // Fatal error
+        } else if (bytes_received == 0) {
+            // Connection closed by peer
+            fprintf(stderr, "Connection closed prematurely by peer.\n");
+            return 0; // Indicate closure before completion
+        } else {
+            // Successfully received some bytes
+            total_received += bytes_received;
+        }
+    }
+
+    // If we reach here, we successfully received exactly 'len' bytes
+    return len;
+}
+
+void accept_connections(int server_fd) {
+    struct sockaddr_in peer_addr;
+    socklen_t peer_addr_len = (socklen_t) sizeof(peer_addr);
+
+    char recv_buf[BLOCK_SIZE] = {};
+    ssize_t recv_size;
+    ssize_t write_size;
+    ssize_t send_size;
+    char* file_data;
+    uint32_t net_data_size;
+
+    while(1) {
+        accepted_fd = accept(server_fd, (struct sockaddr*) &peer_addr, &peer_addr_len);
+        printf("%d\n", accepted_fd);
+
+        if (accepted_fd == -1) {
+            perror(strerror(errno));
+            perror("Could not accept connection\n");
+        } else {
+            syslog(LOG_USER | LOG_DEBUG, "Accepted connection from %s", inet_ntoa(peer_addr.sin_addr));
+
+            write_size = 0;
+            recv_size = 0;
+            send_size = 0;
+
+            // Clear/Initialize receive buffer
+            memset(recv_buf, '\0', sizeof(recv_buf));
+            // Receive data from client
+            //while((recv_size = recv(accepted_fd, recv_buf, BLOCK_SIZE, 0)) > 0) {
+            int rcvd = recv_all(accepted_fd, recv_buf, sizeof(net_data_size));
+            recv_buf[rcvd] = '\n';
+                syslog(LOG_USER | LOG_DEBUG, "recv: %d", (int) rcvd);
+                write_size = write_to_file(recv_buf, rcvd + 1);
+                if (write_size < 0) {
+                    syslog(LOG_USER | LOG_ERR, "Error writing to file");
+                    // Handle error, maybe break or close connection
+                    break;
+                } else if (write_size != recv_size) {
+                     // Handle partial write error if necessary
+                     // May need more sophisticated handling depending on write_to_file behavior
+                }
+            //}
+
+            syslog(LOG_USER | LOG_DEBUG, "Wrote %d bytes to file", (int) write_size);
+
+            file_data = read_from_file();
+
+            send_size = send(accepted_fd, file_data, strlen(file_data), 0);
+
+            if (send_size != rcvd) {
+                syslog(LOG_USER | LOG_ERR, "Failed to send back all the data");
+            }
+
+            free(file_data);
+            close(accepted_fd);
+            syslog(LOG_USER | LOG_DEBUG, "Closed connection from %s", inet_ntoa(peer_addr.sin_addr));
+        }
+    }
+}
+
+int main() {
+    if (signal(SIGINT, signal_handler) == SIG_ERR) {
+        perror("Can't catch SIGINT\n");
+    }
+
+    if (signal(SIGTERM, signal_handler) == SIG_ERR) {
+        perror("Can't catch SIGTERM\n");
+    }
+
+    if ((server_fd = start_and_listen(9000)) == -1) {
+        return -1;
+    }
+    accept_connections(server_fd);
+
+    return 0;
+}
