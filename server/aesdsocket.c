@@ -20,16 +20,29 @@
 #include <sys/queue.h>
 #include <stdatomic.h>
 
+#ifndef USE_AESD_CHAR_DEVICE
+#define USE_AESD_CHAR_DEVICE 1
+#endif
+
+#if USE_AESD_CHAR_DEVICE == 1
+#define DATA_FILE_PATH "/dev/aesdchar"
+#else
+#define DATA_FILE_PATH "/var/tmp/aesdsocketdata"
+#endif
+
 #define PORT 9000
 #define BLOCK_SIZE 4096
-#define DATA_FILE_PATH "/var/tmp/aesdsocketdata"
 #define TIMESTAMP_BUFFER_SIZE 64
 #define TIMESTAMP_INTERVAL_SECS 10
 
 pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+#if USE_AESD_CHAR_DEVICE == 0
 pthread_mutex_t time_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_t timestamp_thread_id;
+#endif
+
 atomic_bool running = true;
 
 int server_fd = -1;
@@ -56,8 +69,10 @@ void signal_handler(int _) {
     //syslog(LOG_USER | LOG_ERR, "Caught signal, exiting");
     atomic_store(&running, false);
 
+    #if USE_AESD_CHAR_DEVICE == 0
     pthread_cancel(timestamp_thread_id);
     pthread_join(timestamp_thread_id, NULL);
+    #endif
 
     pthread_mutex_lock(&queue_mutex);
     struct thread* current = SLIST_FIRST(&thread_queue);
@@ -86,10 +101,15 @@ void signal_handler(int _) {
 
     close(server_fd);
     close(read_fd);
+
+    #if USE_AESD_CHAR_DEVICE == 0
     remove(DATA_FILE_PATH);
+    #endif
+
     exit(0);
 }
 
+#if USE_AESD_CHAR_DEVICE == 0
 void* timestamper(void* _) {
     time_t timer;
     char timestamp_buf[TIMESTAMP_BUFFER_SIZE];
@@ -140,6 +160,7 @@ void* timestamper(void* _) {
     syslog(LOG_USER | LOG_INFO, "Timestamp writer thread exiting");
     return NULL;
 }
+#endif
 
 int start_and_listen(int port) {
     int socket_fd;
@@ -311,9 +332,11 @@ void* process_connection(void* args) {
 void accept_connections(int server_fd) {
     SLIST_INIT(&thread_queue);
 
+    #if USE_AESD_CHAR_DEVICE == 0
     if (pthread_create(&timestamp_thread_id, NULL, timestamper, NULL) != 0) {
         syslog(LOG_USER | LOG_ERR, "Failed to create timestamp writer thread");
     }
+    #endif
 
     while(atomic_load(&running)) {
         struct sockaddr_in peer_addr;
@@ -442,6 +465,8 @@ int main(int argc, char** argv) {
         accept_connections(server_fd);
     }
     pthread_mutex_destroy(&file_mutex);
+    #if USE_AESD_CHAR_DEVICE == 0
     pthread_mutex_destroy(&time_mutex);
+    #endif
     return 0;
 }
