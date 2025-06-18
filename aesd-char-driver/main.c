@@ -266,7 +266,7 @@ int aesd_init_module(void)
         return result;
     }
     memset(&aesd_device,0,sizeof(struct aesd_dev));
-    aesd_circular_buffer_init(aesd_device.buffer);
+    aesd_circular_buffer_init(aesd_device.cbuffer);
     mutex_init(&aesd_device.cdev_mutex);
 
     result = aesd_setup_cdev(&aesd_device);
@@ -295,7 +295,7 @@ void aesd_cleanup_module(void)
     }
 
     // Free all buffptr's within the circular buffer using the provided macro
-    AESD_CIRCULAR_BUFFER_FOREACH(entry, &aesd_device.cbuffer, index) {
+    AESD_CIRCULAR_BUFFER_FOREACH(entry, aesd_device.cbuffer, index) {
         if (entry->buffptr) { // Only kfree if memory was actually allocated for this entry
             kfree((void *)entry->buffptr); // Cast away const for kfree
             entry->buffptr = NULL; // Clear pointer after freeing
