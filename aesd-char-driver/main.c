@@ -108,7 +108,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
         }
 
         *f_pos += bytes_to_copy_from_entry;
-        bytes_read += entry_offset_byte_rtn;
+        bytes_read += bytes_to_copy_from_entry;
     }
 
 unlock_mutex_and_return:
@@ -216,17 +216,15 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         }
     }
 
-
-    kfree(data_to_write);
-
-unlock_mutex_and_return:
-    mutex_unlock(&aesd_device.cdev_mutex);
-    return retval;
+    retval = count;
 
 exit_free_data_to_write:
     if (data_to_write) {
         kfree(data_to_write);
     }
+
+unlock_mutex_and_return:
+    mutex_unlock(&aesd_device.cdev_mutex);
     return retval;
 }
 
