@@ -137,7 +137,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     data_to_write = kmalloc(count, GFP_KERNEL);
     if (data_to_write == NULL) {
         PDEBUG("aesd_write: Could not allocate buff");
-        retval = -EFAULT;
+        retval = -ENOMEM;
         goto unlock_mutex_and_return;
     }
 

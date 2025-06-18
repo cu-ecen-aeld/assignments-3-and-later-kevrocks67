@@ -63,6 +63,11 @@ struct thread {
     SLIST_ENTRY(thread) pointers;
 };
 
+typedef struct {
+    char* data;
+    ssize_t size;
+} read_result_t;
+
 SLIST_HEAD(thread_id_list, thread) thread_queue;
 
 void signal_handler(int _) {
@@ -222,7 +227,8 @@ int write_to_file(pthread_mutex_t* mutex, const char recv_buf[BLOCK_SIZE], ssize
     return bytes_written;
 }
 
-char* read_from_file(pthread_mutex_t* mutex) {
+read_result_t read_from_file(pthread_mutex_t* mutex) {
+    read_result_t result = { .data = NULL, .size = 0 };
     ssize_t fsize = 0;
     char* buff = NULL;
 
@@ -232,7 +238,7 @@ char* read_from_file(pthread_mutex_t* mutex) {
     if (read_fd == -1) {
         syslog(LOG_USER | LOG_ERR, "Could not open file to read");
         pthread_mutex_unlock(mutex);
-        return NULL;
+        return result;
     }
 
     struct stat file_stat;
@@ -246,7 +252,7 @@ char* read_from_file(pthread_mutex_t* mutex) {
     buff = (char*) malloc(fsize);
     if (buff == NULL) {
         syslog(LOG_USER | LOG_ERR, "Could not allocate memory to read file");
-        return NULL;
+        return result;
     }
 
     memset(buff, '\0', fsize);
@@ -258,7 +264,7 @@ char* read_from_file(pthread_mutex_t* mutex) {
         syslog(LOG_USER | LOG_ERR, "Could not open file to read");
         free(buff);
         pthread_mutex_unlock(mutex);
-        return NULL;
+        return result;
     }
 
     ssize_t bytes_read = read(read_fd, buff, fsize - 1);
@@ -267,12 +273,14 @@ char* read_from_file(pthread_mutex_t* mutex) {
         free(buff);
         close(read_fd);
         pthread_mutex_unlock(mutex);
-        return NULL;
+        return result;
     }
 
     close(read_fd);
     pthread_mutex_unlock(mutex);
-    return buff;
+    result.data = buff;
+    result.size = bytes_read;
+    return result;
 }
 
 void* process_connection(void* args) {
@@ -307,13 +315,15 @@ void* process_connection(void* args) {
     }
     syslog(LOG_USER | LOG_DEBUG, "total_recvd: %d", (int) total_recvd);
 
-    file_data = read_from_file(&file_mutex);
+    read_result_t read_results = read_from_file(&file_mutex);
+    file_data = read_results.data;
+    ssize_t read_size = read_results.size;
 
     if (file_data != NULL) {
         ssize_t send_size;
-        send_size = send(td->accepted_fd, file_data, strlen(file_data), 0);
+        send_size = send(td->accepted_fd, file_data, read_size, 0);
 
-        if (send_size != (ssize_t) strlen(file_data)) {
+        if (send_size != read_size) {
             syslog(LOG_USER | LOG_ERR, "Failed to send back all the data");
         }
         free(file_data);
