@@ -78,7 +78,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     }
 
     while (bytes_read < count && *f_pos < dev->entry_len) {
-        entry = aesd_circular_buffer_find_entry_offset_for_fpos(dev->cbuffer, *f_pos, &entry_offset_byte_rtn);
+        entry = aesd_circular_buffer_find_entry_offset_for_fpos(&dev->cbuffer, *f_pos, &entry_offset_byte_rtn);
 
          if (entry == NULL || entry->buffptr == NULL) {
             PDEBUG("aesd_read: Error - entry not found or buffptr is NULL for f_pos %lld.\n", *f_pos);
@@ -134,20 +134,20 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         return -ERESTARTSYS;
     }
 
-    char* buff = kmalloc(count, GFP_KERNEL);
-    if (buff == NULL) {
+    data_to_write = kmalloc(count, GFP_KERNEL);
+    if (data_to_write == NULL) {
         PDEBUG("aesd_write: Could not allocate buff");
         retval = -EFAULT;
         goto unlock_mutex_and_return;
     }
 
-    memset(buff, 0, count);
+    memset(data_to_write, 0, count);
 
     // Copy data from userland buffer
-    if(copy_from_user(buff, buf, count)) {
+    if(copy_from_user(data_to_write, buf, count)) {
         PDEBUG("aesd_write: Could not copy data from userspace");
         retval = -EFAULT;
-        goto unlock_mutex_and_return;
+        goto exit_free_data_to_write;
     }
 
     // Get current buffer length and increase the size of the buffer
@@ -178,17 +178,17 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         memcpy((char*) cbuffer_entry.buffptr, dev->buffer, cbuffer_entry_len);
         cbuffer_entry.size = cbuffer_entry_len;
 
-        if (dev->cbuffer->full) {
-            oldest_cbuffer_entry_ptr = &dev->cbuffer->entry[dev->cbuffer->out_offs];
+        if ((dev->cbuffer).full) {
+            oldest_cbuffer_entry_ptr = &(dev->cbuffer).entry[(dev->cbuffer).out_offs];
             if (oldest_cbuffer_entry_ptr->buffptr) {
                 PDEBUG("Freeing oldest entry at index %u, size %zu\n",
-                       dev->cbuffer->out_offs, oldest_cbuffer_entry_ptr->size);
+                       (dev->cbuffer).out_offs, oldest_cbuffer_entry_ptr->size);
                 kfree(oldest_cbuffer_entry_ptr->buffptr);
                 dev->entry_len -= oldest_cbuffer_entry_ptr->size;
             }
         }
 
-        aesd_circular_buffer_add_entry(dev->cbuffer, &cbuffer_entry);
+        aesd_circular_buffer_add_entry(&dev->cbuffer, &cbuffer_entry);
         dev->entry_len += cbuffer_entry.size;
 
         PDEBUG("Added command of size %zu to circular buffer. Total size: %zu\n",
@@ -217,7 +217,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     }
 
 
-    kfree(buff);
+    kfree(data_to_write);
 
 unlock_mutex_and_return:
     mutex_unlock(&aesd_device.cdev_mutex);
@@ -265,8 +265,8 @@ int aesd_init_module(void)
         printk(KERN_WARNING "Can't get major %d\n", aesd_major);
         return result;
     }
-    memset(&aesd_device,0,sizeof(struct aesd_dev));
-    aesd_circular_buffer_init(aesd_device.cbuffer);
+    memset(&aesd_device, 0, sizeof(struct aesd_dev));
+    aesd_circular_buffer_init(&aesd_device.cbuffer);
     mutex_init(&aesd_device.cdev_mutex);
 
     result = aesd_setup_cdev(&aesd_device);
@@ -295,7 +295,7 @@ void aesd_cleanup_module(void)
     }
 
     // Free all buffptr's within the circular buffer using the provided macro
-    AESD_CIRCULAR_BUFFER_FOREACH(entry, aesd_device.cbuffer, index) {
+    AESD_CIRCULAR_BUFFER_FOREACH(entry, &aesd_device.cbuffer, index) {
         if (entry->buffptr) { // Only kfree if memory was actually allocated for this entry
             kfree((void *)entry->buffptr); // Cast away const for kfree
             entry->buffptr = NULL; // Clear pointer after freeing

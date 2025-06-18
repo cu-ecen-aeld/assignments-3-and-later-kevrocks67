@@ -27,7 +27,7 @@
 
 struct aesd_dev
 {
-    struct aesd_circular_buffer* cbuffer; // Circular Buffer
+    struct aesd_circular_buffer cbuffer; // Circular Buffer
     struct cdev cdev;                     // Char device structure
     struct mutex cdev_mutex;              // Mutex used for I/O with cdev
     char* buffer;                         // Circular Buffer
