@@ -328,7 +328,7 @@ void accept_connections(int server_fd) {
         socklen_t peer_addr_len = sizeof(peer_addr);
 
         int accepted_fd = accept(server_fd, (struct sockaddr*) &peer_addr, &peer_addr_len);
-        printf("%d\n", accepted_fd);
+        //printf("%d\n", accepted_fd);
 
         if (!atomic_load(&running)) {
             if (accepted_fd != -1) {
