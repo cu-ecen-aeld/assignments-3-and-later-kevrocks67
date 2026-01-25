@@ -6,12 +6,15 @@ else
   CC := $(CROSS_COMPILE)gcc
 endif
 
+CFLAGS ?= -g -Wall -Werror
+LDFLAGS ?= -lpthread
+
 
 all: build
 
 build:
-	$(CC) -Wall -g aesdsocket.c -o aesdsocket
-	# $(CC) -Wall -fsanitize=thread -g aesdsocket.c -o aesdsocket
+	$(CC) $(CFLAGS) -Wall -g aesdsocket.c -o aesdsocket $(LDFLAGS)
+	# $(CC) $(CFLAGS) -Wall -fsanitize=thread -g aesdsocket.c -o aesdsocket
 
 clean:
 	rm -f aesdsocket *.o
