@@ -21,7 +21,7 @@
 #include <stdatomic.h>
 
 #ifndef USE_AESD_CHAR_DEVICE
-#define USE_AESD_CHAR_DEVICE 1
+#define USE_AESD_CHAR_DEVICE 0
 #endif
 
 #if USE_AESD_CHAR_DEVICE == 1
@@ -63,11 +63,6 @@ struct thread {
     SLIST_ENTRY(thread) pointers;
 };
 
-typedef struct {
-    char* data;
-    ssize_t size;
-} read_result_t;
-
 SLIST_HEAD(thread_id_list, thread) thread_queue;
 
 void signal_handler(int _) {
@@ -97,9 +92,6 @@ void signal_handler(int _) {
         current = next_cleanup;
     }
     pthread_mutex_unlock(&queue_mutex);
-
-    pthread_mutex_destroy(&queue_mutex);
-    pthread_mutex_destroy(&file_mutex);
 
     pthread_mutex_destroy(&queue_mutex);
     pthread_mutex_destroy(&file_mutex);
@@ -227,60 +219,45 @@ int write_to_file(pthread_mutex_t* mutex, const char recv_buf[BLOCK_SIZE], ssize
     return bytes_written;
 }
 
-read_result_t read_from_file(pthread_mutex_t* mutex) {
-    read_result_t result = { .data = NULL, .size = 0 };
-    ssize_t fsize = 0;
-    char* buff = NULL;
+char* read_from_dev(pthread_mutex_t* mutex) {
+    ssize_t bytes_read = 0;
+    size_t total_size = 0;
+    size_t current_capacity = BLOCK_SIZE;
+    char* read_buff = malloc(current_capacity);
+
+    if (!read_buff) return NULL;
 
     pthread_mutex_lock(mutex);
-    read_fd = open(DATA_FILE_PATH, O_RDONLY);
-
-    if (read_fd == -1) {
-        syslog(LOG_USER | LOG_ERR, "Could not open file to read");
+    int fd = open(DATA_FILE_PATH, O_RDONLY);
+    if (fd == -1) {
         pthread_mutex_unlock(mutex);
-        return result;
+        free(read_buff);
+        return NULL;
     }
 
-    struct stat file_stat;
-    fstat(read_fd, &file_stat);
-    fsize = file_stat.st_size + 1;
-    close(read_fd);
+    // Wrap the assignment in (parentheses) to fix precedence!
+    while ((bytes_read = read(fd, read_buff + total_size, BLOCK_SIZE)) > 0) {
+        total_size += bytes_read;
+
+        // Ensure we have space for the next block + null terminator
+        if (total_size + BLOCK_SIZE + 1 > current_capacity) {
+            current_capacity += BLOCK_SIZE;
+            char* temp_buff = realloc(read_buff, current_capacity);
+            if (!temp_buff) {
+                free(read_buff);
+                close(fd);
+                pthread_mutex_unlock(mutex);
+                return NULL;
+            }
+            read_buff = temp_buff;
+        }
+    }
+
+    read_buff[total_size] = '\0';
+
+    close(fd);
     pthread_mutex_unlock(mutex);
-
-    syslog(LOG_USER | LOG_DEBUG, "File Size: %d", (int)fsize);
-
-    buff = (char*) malloc(fsize);
-    if (buff == NULL) {
-        syslog(LOG_USER | LOG_ERR, "Could not allocate memory to read file");
-        return result;
-    }
-
-    memset(buff, '\0', fsize);
-    syslog(LOG_USER | LOG_DEBUG, "Reading from %s", DATA_FILE_PATH);
-
-    pthread_mutex_lock(mutex);
-    read_fd = open(DATA_FILE_PATH, O_RDONLY);
-    if (read_fd == -1) {
-        syslog(LOG_USER | LOG_ERR, "Could not open file to read");
-        free(buff);
-        pthread_mutex_unlock(mutex);
-        return result;
-    }
-
-    ssize_t bytes_read = read(read_fd, buff, fsize - 1);
-    if (bytes_read < 0) {
-        syslog(LOG_USER | LOG_ERR, "Error reading from file: %s", strerror(errno));
-        free(buff);
-        close(read_fd);
-        pthread_mutex_unlock(mutex);
-        return result;
-    }
-
-    close(read_fd);
-    pthread_mutex_unlock(mutex);
-    result.data = buff;
-    result.size = bytes_read;
-    return result;
+    return read_buff;
 }
 
 void* process_connection(void* args) {
@@ -315,20 +292,18 @@ void* process_connection(void* args) {
     }
     syslog(LOG_USER | LOG_DEBUG, "total_recvd: %d", (int) total_recvd);
 
-    read_result_t read_results = read_from_file(&file_mutex);
-    file_data = read_results.data;
-    ssize_t read_size = read_results.size;
+    file_data = read_from_dev(&file_mutex);
 
     if (file_data != NULL) {
         ssize_t send_size;
-        send_size = send(td->accepted_fd, file_data, read_size, 0);
+        send_size = send(td->accepted_fd, file_data, strlen(file_data), 0);
 
-        if (send_size != read_size) {
+        if (send_size != (ssize_t) strlen(file_data)) {
             syslog(LOG_USER | LOG_ERR, "Failed to send back all the data");
         }
         free(file_data);
     } else {
-        syslog(LOG_USER | LOG_ERR, "read_from_file failed, not sending data back to %s (fd=%d)", inet_ntoa(td->peer_addr.sin_addr), accepted_fd);
+        syslog(LOG_USER | LOG_ERR, "read_from_dev failed, not sending data back to %s (fd=%d)", inet_ntoa(td->peer_addr.sin_addr), accepted_fd);
     }
 
     close(td->accepted_fd);
@@ -435,6 +410,7 @@ void accept_connections(int server_fd) {
 }
 
 int main(int argc, char** argv) {
+    printf("File: %s", DATA_FILE_PATH);
     if (signal(SIGINT, signal_handler) == SIG_ERR) {
         perror("Can't catch SIGINT\n");
     }
