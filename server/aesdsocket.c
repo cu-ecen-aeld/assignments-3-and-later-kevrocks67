@@ -19,6 +19,7 @@
 #include <pthread.h>
 #include <sys/queue.h>
 #include <stdatomic.h>
+#include "aesd_ioctl.h"
 
 #ifndef USE_AESD_CHAR_DEVICE
 #define USE_AESD_CHAR_DEVICE 0
@@ -219,23 +220,28 @@ int write_to_file(pthread_mutex_t* mutex, const char recv_buf[BLOCK_SIZE], ssize
     return bytes_written;
 }
 
-char* read_from_dev(pthread_mutex_t* mutex) {
+char* read_from_dev(pthread_mutex_t* mutex, int optional_fd) {
+    int fd = optional_fd;
     ssize_t bytes_read = 0;
     size_t total_size = 0;
     size_t current_capacity = BLOCK_SIZE;
     char* read_buff = malloc(current_capacity);
+    bool close_fd_at_end = false;
 
     if (!read_buff) return NULL;
 
     pthread_mutex_lock(mutex);
-    int fd = open(DATA_FILE_PATH, O_RDONLY);
-    if (fd == -1) {
-        pthread_mutex_unlock(mutex);
-        free(read_buff);
-        return NULL;
+
+    if (fd < 0) {
+        fd = open(DATA_FILE_PATH, O_RDONLY);
+        if (fd == -1) {
+            pthread_mutex_unlock(mutex);
+            free(read_buff);
+            return NULL;
+        }
+        close_fd_at_end = true;
     }
 
-    // Wrap the assignment in (parentheses) to fix precedence!
     while ((bytes_read = read(fd, read_buff + total_size, BLOCK_SIZE)) > 0) {
         total_size += bytes_read;
 
@@ -255,7 +261,9 @@ char* read_from_dev(pthread_mutex_t* mutex) {
 
     read_buff[total_size] = '\0';
 
-    close(fd);
+    if (close_fd_at_end) {
+        close(fd);
+    }
     pthread_mutex_unlock(mutex);
     return read_buff;
 }
@@ -267,6 +275,8 @@ void* process_connection(void* args) {
     ssize_t recv_size;
     ssize_t total_recvd;
     char* file_data = NULL;
+    struct aesd_seekto seek_params;
+    int dev_fd = -1;
 
     syslog(LOG_USER | LOG_DEBUG, "Accepted connection from %s", inet_ntoa(td->peer_addr.sin_addr));
     total_recvd = 0;
@@ -279,6 +289,18 @@ void* process_connection(void* args) {
         ssize_t write_size;
         syslog(LOG_USER | LOG_DEBUG, "recv: %d", (int) recv_size);
         total_recvd = total_recvd + recv_size;
+
+        if(sscanf(recv_buf, "AESDCHAR_IOCSEEKTO:%d,%d", &seek_params.write_cmd, &seek_params.write_cmd_offset) == 2) {
+            dev_fd = open(DATA_FILE_PATH, O_RDWR);
+            if (dev_fd != -1) {
+                if (ioctl(dev_fd, AESDCHAR_IOCSEEKTO, &seek_params) != 0) {
+                    syslog(LOG_ERR, "ioctl failed: %m");
+                    close(dev_fd);
+                    dev_fd = -1;
+                }
+            }
+            break;
+        }
         write_size = write_to_file(&file_mutex, recv_buf, recv_size);
 
         if (write_size < 0) {
@@ -292,7 +314,7 @@ void* process_connection(void* args) {
     }
     syslog(LOG_USER | LOG_DEBUG, "total_recvd: %d", (int) total_recvd);
 
-    file_data = read_from_dev(&file_mutex);
+    file_data = read_from_dev(&file_mutex, dev_fd);
 
     if (file_data != NULL) {
         ssize_t send_size;
@@ -303,7 +325,7 @@ void* process_connection(void* args) {
         }
         free(file_data);
     } else {
-        syslog(LOG_USER | LOG_ERR, "read_from_dev failed, not sending data back to %s (fd=%d)", inet_ntoa(td->peer_addr.sin_addr), accepted_fd);
+        syslog(LOG_USER | LOG_ERR, "read_from_dev failed, not sending data back to %s (accepted_connection fd=%d)", inet_ntoa(td->peer_addr.sin_addr), accepted_fd);
     }
 
     close(td->accepted_fd);

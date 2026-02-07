@@ -53,6 +53,19 @@ int aesd_release(struct inode *inode, struct file *filp)
     return 0;
 }
 
+loff_t aesd_llseek(struct file* filp, loff_t off, int whence) {
+    struct aesd_dev* dev = filp->private_data;
+    loff_t retval;
+
+    if (mutex_lock_interruptible(&dev->cdev_mutex)) {
+        PDEBUG("aesd_llseek: failed to lock mutex");
+        return -ERESTARTSYS;
+    }
+
+    retval = fixed_size_llseek(filp, off, whence, dev->entry_len);
+    goto unlock_mutex_and_return
+}
+
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
@@ -231,10 +244,61 @@ unlock_mutex_and_return:
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
+    .llseek =   ased_llseek,
     .write =    aesd_write,
     .open =     aesd_open,
     .release =  aesd_release,
 };
+
+static int aesd_seek_to_offset(struct file* filp, uint32_t write_cmd, uint32_t write_cmd_offset) {
+    struct aesd_dev* dev = filp->private_data;
+    struct aesd_circular_buffer *buffer = &dev->cbuffer;
+    loff_t new_fpos = 0;
+
+    if (write_cmd >= buffer->num_entries) {
+        return -EINVAL;
+    }
+
+    uint32_t entry_index = (buffer->out_offs + write_cmd) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+    if (write_cmd_offset >= buffer->entry[entry_index].size) {
+        return -EINVAL;
+    }
+
+    for (int i = 0; i < write_cmd; i++) {
+        uint32_t pos = (buffer->out_offs + i) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        new_fpos += buffer->entry[pos].size;
+    }
+
+    new_fpos += write_cmd_offset;
+    filp->f_pos = new_fpos;
+
+    return 0;
+}
+
+int aesd_ioctl(const struct file *filp, unsigned int cmd, unsigned int arg) {
+    struct aesd_seekto seek_params;
+
+    switch (cmd) {
+        case AESDCHAR_IOCSEEKTO:
+            if (copy_from_user(&seek_params, (struct aesd_seekto __user *)arg, sizeof(seek_params))) {
+                return -EFAULT;
+            }
+
+            struct aesd_dev* dev = filp->private_data
+
+            if (mutex_lock_interruptible(&dev->cdev_mutex)) {
+                PDEBUG("aesd_llseek: failed to lock mutex");
+                return -ERESTARTSYS;
+            }
+
+            int retval = aesd_seek_to_offset(filp, seek_params.write_cmd, seek_params.write_cmd_offset;
+            goto unlock_mutex_and_return;
+
+        case default:
+            return -ENOTTY;
+    }`
+}
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
 {

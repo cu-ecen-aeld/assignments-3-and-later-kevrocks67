@@ -13,7 +13,7 @@ LDFLAGS ?= -lpthread
 all: build
 
 build:
-	$(CC) $(CFLAGS) -Wall -g aesdsocket.c -o aesdsocket $(LDFLAGS)
+	$(CC) $(CFLAGS) -Wall -I../aesd-char-driver -g aesdsocket.c -o aesdsocket $(LDFLAGS)
 	# $(CC) $(CFLAGS) -Wall -fsanitize=thread -g aesdsocket.c -o aesdsocket
 
 clean:
