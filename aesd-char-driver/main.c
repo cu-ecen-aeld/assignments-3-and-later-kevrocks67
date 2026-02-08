@@ -22,6 +22,7 @@
 #include <linux/slab.h>
 #include "linux/mutex.h"
 #include "linux/uaccess.h"
+#include "aesd_ioctl.h"
 
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -63,7 +64,7 @@ loff_t aesd_llseek(struct file* filp, loff_t off, int whence) {
     }
 
     retval = fixed_size_llseek(filp, off, whence, dev->entry_len);
-    goto unlock_mutex_and_return
+    goto unlock_mutex_and_return;
 }
 
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
@@ -244,7 +245,7 @@ unlock_mutex_and_return:
 struct file_operations aesd_fops = {
     .owner =    THIS_MODULE,
     .read =     aesd_read,
-    .llseek =   ased_llseek,
+    .llseek =   aesd_llseek,
     .write =    aesd_write,
     .open =     aesd_open,
     .release =  aesd_release,
@@ -292,7 +293,7 @@ int aesd_ioctl(const struct file *filp, unsigned int cmd, unsigned int arg) {
                 return -ERESTARTSYS;
             }
 
-            int retval = aesd_seek_to_offset(filp, seek_params.write_cmd, seek_params.write_cmd_offset;
+            int retval = aesd_seek_to_offset(filp, seek_params.write_cmd, seek_params.write_cmd_offset);
             goto unlock_mutex_and_return;
 
         case default:
