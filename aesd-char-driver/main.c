@@ -54,7 +54,7 @@ int aesd_release(struct inode *inode, struct file *filp)
     return 0;
 }
 
-loff_t aesd_llseek(struct file* filp, loff_t off, int whence) {
+static loff_t aesd_llseek(struct file* filp, loff_t off, int whence) {
     struct aesd_dev* dev = filp->private_data;
     loff_t retval;
 
@@ -64,7 +64,8 @@ loff_t aesd_llseek(struct file* filp, loff_t off, int whence) {
     }
 
     retval = fixed_size_llseek(filp, off, whence, dev->entry_len);
-    goto unlock_mutex_and_return;
+    mutex_unlock(&dev->cdev_mutex);
+    return retval;
 }
 
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
@@ -242,14 +243,6 @@ unlock_mutex_and_return:
     return retval;
 }
 
-struct file_operations aesd_fops = {
-    .owner =    THIS_MODULE,
-    .read =     aesd_read,
-    .llseek =   aesd_llseek,
-    .write =    aesd_write,
-    .open =     aesd_open,
-    .release =  aesd_release,
-};
 
 static int aesd_seek_to_offset(struct file* filp, uint32_t write_cmd, uint32_t write_cmd_offset) {
     struct aesd_dev* dev = filp->private_data;
@@ -277,8 +270,10 @@ static int aesd_seek_to_offset(struct file* filp, uint32_t write_cmd, uint32_t w
     return 0;
 }
 
-int aesd_ioctl(const struct file *filp, unsigned int cmd, unsigned int arg) {
+static long aesd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
+    struct aesd_dev* dev = filp->private_data;
     struct aesd_seekto seek_params;
+    int retval = 0;
 
     switch (cmd) {
         case AESDCHAR_IOCSEEKTO:
@@ -286,20 +281,29 @@ int aesd_ioctl(const struct file *filp, unsigned int cmd, unsigned int arg) {
                 return -EFAULT;
             }
 
-            struct aesd_dev* dev = filp->private_data
-
             if (mutex_lock_interruptible(&dev->cdev_mutex)) {
                 PDEBUG("aesd_llseek: failed to lock mutex");
                 return -ERESTARTSYS;
             }
 
-            int retval = aesd_seek_to_offset(filp, seek_params.write_cmd, seek_params.write_cmd_offset);
-            goto unlock_mutex_and_return;
+            retval = aesd_seek_to_offset(filp, seek_params.write_cmd, seek_params.write_cmd_offset);
+            mutex_unlock(&dev->cdev_mutex);
+            return retval;
 
-        case default:
+        default:
             return -ENOTTY;
-    }`
+    }
 }
+
+struct file_operations aesd_fops = {
+    .owner =    THIS_MODULE,
+    .read =     aesd_read,
+    .llseek =   aesd_llseek,
+    .write =    aesd_write,
+    .open =     aesd_open,
+    .release =  aesd_release,
+    .unlocked_ioctl =   aesd_ioctl,
+};
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
 {
